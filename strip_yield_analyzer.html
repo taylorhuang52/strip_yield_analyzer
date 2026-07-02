@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>Strip Test Yield 分析儀</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --bg: #0a0d0b;
+    --bg-panel: #10140f;
+    --bg-panel-2: #141a13;
+    --line: #23301f;
+    --phosphor: #6fffa8;
+    --phosphor-dim: #3a8a5e;
+    --amber: #ffb454;
+    --amber-dim: #8a6a35;
+    --red: #ff6a6a;
+    --pink: #ff6fae;
+    --pink-dim: #9a3a63;
+    --text: #d7ead9;
+    --text-dim: #7a9080;
+    --font-mono: 'IBM Plex Mono', 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(ellipse 1200px 600px at 50% -10%, #142018 0%, transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-sans);
+    min-height:100vh;
+    padding:28px 18px 60px;
+  }
+
+  .scanlines{
+    pointer-events:none;
+    position:fixed; inset:0;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
+    z-index:50;
+  }
+
+  .wrap{max-width:980px; margin:0 auto;}
+
+  header{margin-bottom:22px;}
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:11px; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--phosphor-dim); margin-bottom:8px;
+  }
+  h1{
+    font-size:26px; font-weight:800; letter-spacing:-0.01em; margin:0 0 6px;
+    color:#eafcef;
+  }
+  h1 span{color:var(--phosphor);}
+  .sub{font-size:13.5px; color:var(--text-dim); max-width:64ch; line-height:1.55;}
+
+  /* ---- drop zone ---- */
+  .dropzone{
+    margin-top:22px;
+    position:relative;
+    border:1.5px dashed var(--line);
+    border-radius:10px;
+    background: linear-gradient(180deg, var(--bg-panel) 0%, #0d110d 100%);
+    padding:34px 20px;
+    text-align:center;
+    cursor:pointer;
+    transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+  }
+  .dropzone:hover{border-color:var(--phosphor-dim);}
+  .dropzone.drag{
+    border-color:var(--phosphor);
+    box-shadow: 0 0 0 1px var(--phosphor), 0 0 30px -6px rgba(111,255,168,0.35);
+    background: linear-gradient(180deg, #131c14 0%, #0d110d 100%);
+  }
+  .dropzone.has-file{border-style:solid; border-color:var(--phosphor-dim);}
+  .dz-icon{
+    width:46px;height:46px;margin:0 auto 14px;
+    border:1.5px solid var(--phosphor-dim);
+    border-radius:8px;
+    display:flex;align-items:center;justify-content:center;
+    color:var(--phosphor);
+    font-family:var(--font-mono); font-size:20px;
+  }
+  .dz-title{font-weight:600; font-size:14.5px; color:var(--text);}
+  .dz-title b{color:var(--phosphor);}
+  .dz-hint{font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim); margin-top:6px;}
+  #fileInput{display:none;}
+  .dz-filename{
+    margin-top:14px; font-family:var(--font-mono); font-size:12.5px;
+    color:var(--phosphor); word-break:break-all;
+  }
+  .dz-status{margin-top:6px; font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim);}
+  .dz-status.err{color:var(--red);}
+
+  /* ---- tabs ---- */
+  .tabs{
+    margin-top:20px;
+    display:none;
+    gap:0;
+    border:1px solid var(--line);
+    border-radius:10px 10px 0 0;
+    overflow:hidden;
+  }
+  .tabs.show{display:flex;}
+  .tab-btn{
+    flex:1;
+    background:var(--bg-panel);
+    border:none;
+    color:var(--text-dim);
+    font-family:var(--font-mono);
+    font-size:12.5px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    font-weight:600;
+    padding:14px 10px;
+    cursor:pointer;
+    position:relative;
+    transition: color .15s ease, background .15s ease;
+  }
+  .tab-btn:not(:last-child){border-right:1px solid var(--line);}
+  .tab-btn .ch{color:var(--phosphor-dim); margin-right:8px;}
+  .tab-btn:hover{color:var(--text); background:#141a13;}
+  .tab-btn.active{color:var(--phosphor); background:var(--bg-panel-2);}
+  .tab-btn.active .ch{color:var(--phosphor);}
+  .tab-btn.active::after{
+    content:'';
+    position:absolute; left:0; right:0; bottom:0; height:2px;
+    background:var(--phosphor);
+    box-shadow:0 0 10px var(--phosphor);
+  }
+
+  /* CH2 Strip Yield — pink accent */
+  .tab-btn[data-tab="strip"] .ch{color:var(--pink-dim);}
+  .tab-btn[data-tab="strip"]:hover{background:#1a1013;}
+  .tab-btn[data-tab="strip"].active{color:var(--pink); background:#1a1013;}
+  .tab-btn[data-tab="strip"].active .ch{color:var(--pink);}
+  .tab-btn[data-tab="strip"].active::after{background:var(--pink); box-shadow:0 0 10px var(--pink);}
+
+  .tab-content{display:none;}
+  .tab-content.active{display:block;}
+
+  /* ---- controls ---- */
+  .panel{
+    background:var(--bg-panel);
+    border:1px solid var(--line);
+    border-top:none;
+    border-radius:0 0 10px 10px;
+    padding:18px 20px;
+    display:none;
+  }
+  .panel.show{display:block;}
+  .row{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px;}
+  .meta-strip{
+    display:flex; gap:22px; flex-wrap:wrap; font-family:var(--font-mono); font-size:12px; color:var(--text-dim);
+  }
+  .meta-strip b{color:var(--text); font-weight:600;}
+
+  .selector{display:flex; align-items:center; gap:10px;}
+  .selector label{
+    font-family:var(--font-mono); font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim);
+  }
+  select.sigmaSel{
+    appearance:none; -webkit-appearance:none;
+    background: #0e130f;
+    border:1px solid var(--phosphor-dim);
+    color:var(--phosphor);
+    font-family:var(--font-mono); font-size:15px; font-weight:700;
+    padding:8px 34px 8px 14px;
+    border-radius:6px;
+    cursor:pointer;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%236fffa8'/></svg>");
+    background-repeat:no-repeat;
+    background-position:right 12px center;
+  }
+  select.sigmaSel:focus{outline:2px solid var(--phosphor); outline-offset:2px;}
+
+  /* ---- readouts ---- */
+  .grid{
+    margin-top:18px;
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    gap:12px;
+  }
+  @media (max-width:720px){ .grid{grid-template-columns:repeat(2,1fr);} }
+  .card{
+    background: linear-gradient(180deg, var(--bg-panel-2) 0%, #0c100c 100%);
+    border:1px solid var(--line);
+    border-radius:9px;
+    padding:14px 16px;
+  }
+  .card .lbl{
+    font-family:var(--font-mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--text-dim); margin-bottom:8px;
+  }
+  .card .val{
+    font-family:var(--font-mono); font-weight:700; font-size:22px; color:var(--phosphor);
+    text-shadow: 0 0 14px rgba(111,255,168,0.25);
+  }
+  .card.limit .val{color:var(--amber); text-shadow:0 0 14px rgba(255,180,84,0.25);}
+  .card .sub2{font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim); margin-top:4px;}
+
+  /* ---- histogram ---- */
+  .chart-panel{margin-top:14px;}
+  .chart-title{
+    font-family:var(--font-mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--text-dim); margin-bottom:10px;
+  }
+  svg.hist{width:100%; height:auto; display:block;}
+  .legend{display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; font-family:var(--font-mono); font-size:11px; color:var(--text-dim);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .legend i{width:12px;height:2px; display:inline-block;}
+
+  /* ---- reference table ---- */
+  .table-panel{margin-top:18px;}
+  table{width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:12.5px;}
+  th,td{padding:9px 10px; text-align:right; border-bottom:1px solid var(--line);}
+  th:first-child, td:first-child{text-align:left;}
+  th{color:var(--text-dim); font-weight:500; letter-spacing:.05em; text-transform:uppercase; font-size:10.5px;}
+  .sig{text-transform:none; display:inline-block;}
+  tr.active-row td{background:rgba(111,255,168,0.06); color:var(--phosphor);}
+  tr.active-row td:first-child{font-weight:700;}
+
+  .axis-note{font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim); margin-top:8px;}
+
+  footer{margin-top:26px; font-family:var(--font-mono); font-size:10.5px; color:#3f5548; text-align:center;}
+
+  /* CH2 Strip Yield — pink theme scope (overrides --phosphor for everything inside) */
+  #resultPanel-strip{
+    --phosphor: var(--pink);
+    --phosphor-dim: var(--pink-dim);
+  }
+  #resultPanel-strip .card .val{ text-shadow: 0 0 14px rgba(255,111,174,0.28); }
+  #resultPanel-strip select.sigmaSel{
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23ff6fae'/></svg>");
+  }
+  #resultPanel-strip tr.active-row td{ background: rgba(255,111,174,0.08); }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Strip Test // Yield Statistics</div>
+    <h1>Yield <span>分析儀</span></h1>
+    <div class="sub">拖曳 Strip Test Summary 的 .xlsx 或包含 xlsx 的 .zip 檔案，自動計算 Panel Yield（單一 Yield 欄位）與 Strip Yield（AC~AZ 各條 strip 良率）的平均值、中位數、標準差，並依選定的 σ 倍數計算下限值。</div>
+  </header>
+
+  <div class="dropzone" id="dropzone" tabindex="0">
+    <div class="dz-icon">⇩</div>
+    <div class="dz-title">拖曳檔案到這裡，或<b>點擊選擇</b></div>
+    <div class="dz-hint">支援 .xlsx／.zip（內含 .xlsx）</div>
+    <div class="dz-filename" id="dzFilename"></div>
+    <div class="dz-status" id="dzStatus"></div>
+    <input type="file" id="fileInput" accept=".xlsx,.zip">
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab-btn active" data-tab="panel"><span class="ch">CH1</span>Panel Yield</button>
+    <button class="tab-btn" data-tab="strip"><span class="ch">CH2</span>Strip Yield</button>
+  </div>
+
+  <!-- Panel Yield tab -->
+  <div class="tab-content active" id="tab-panel">
+    <div class="panel" id="resultPanel-panel">
+      <div class="row">
+        <div class="meta-strip">
+          <div>檔案：<b class="mFile">–</b></div>
+          <div>樣本數 (N)：<b class="mCount">–</b></div>
+          <div>來源欄位：<b>Yield</b></div>
+          <div class="mInvalidWrap" style="display:none; color:var(--amber);">已排除 <b class="mInvalid">0</b> 筆超出 0~100% 的異常值</div>
+        </div>
+        <div class="selector">
+          <label>Sigma 倍數</label>
+          <select class="sigmaSel"></select>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card"><div class="lbl">Average</div><div class="val rAvg">–</div></div>
+        <div class="card"><div class="lbl">Median</div><div class="val rMed">–</div></div>
+        <div class="card"><div class="lbl">Std Dev (<span class="sig">σ</span>, sample)</div><div class="val rStd">–</div></div>
+        <div class="card limit"><div class="lbl">Average − N×<span class="sig">σ</span></div><div class="val rAvgLimit">–</div><div class="sub2 rAvgLimitN">N = –</div></div>
+        <div class="card limit"><div class="lbl">Median − N×<span class="sig">σ</span></div><div class="val rMedLimit">–</div><div class="sub2 rMedLimitN">N = –</div></div>
+        <div class="card"><div class="lbl">Min / Max</div><div class="val rMinMax" style="font-size:16px;">–</div></div>
+      </div>
+
+      <div class="chart-panel">
+        <div class="chart-title">Panel Yield 分佈</div>
+        <svg class="hist" viewBox="0 0 900 290"></svg>
+        <div class="axis-note">左軸（長條）：樣本數量　·　右軸（曲線）：機率密度　·　<span class="outlierNote"></span></div>
+        <div class="legend">
+          <span><i style="background:var(--phosphor)"></i>Average</span>
+          <span><i style="background:none; border-top:2px dashed #9fd8b8;"></i>Median</span>
+          <span><i style="background:none; border-top:2px solid #c9ffdf;"></i>機率密度分布</span>
+          <span><i style="background:var(--amber)"></i>Average − N×<span class="sig">σ</span></span>
+          <span><i style="background:none; border-top:2px dashed var(--red);"></i>Median − N×<span class="sig">σ</span></span>
+        </div>
+      </div>
+
+      <div class="table-panel">
+        <div class="chart-title">N = 3 ~ 8 對照表</div>
+        <table>
+          <thead><tr><th>N</th><th>Average − N×<span class="sig">σ</span></th><th>Median − N×<span class="sig">σ</span></th></tr></thead>
+          <tbody class="refTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Strip Yield tab -->
+  <div class="tab-content" id="tab-strip">
+    <div class="panel" id="resultPanel-strip">
+      <div class="row">
+        <div class="meta-strip">
+          <div>檔案：<b class="mFile">–</b></div>
+          <div>樣本數 (N)：<b class="mCount">–</b></div>
+          <div>來源欄位：<b>AC ~ AZ（各 strip 良率）</b></div>
+          <div class="mInvalidWrap" style="display:none; color:var(--amber);">已排除 <b class="mInvalid">0</b> 筆超出 0~100% 的異常值</div>
+        </div>
+        <div class="selector">
+          <label>Sigma 倍數</label>
+          <select class="sigmaSel"></select>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card"><div class="lbl">Average</div><div class="val rAvg">–</div></div>
+        <div class="card"><div class="lbl">Median</div><div class="val rMed">–</div></div>
+        <div class="card"><div class="lbl">Std Dev (<span class="sig">σ</span>, sample)</div><div class="val rStd">–</div></div>
+        <div class="card limit"><div class="lbl">Average − N×<span class="sig">σ</span></div><div class="val rAvgLimit">–</div><div class="sub2 rAvgLimitN">N = –</div></div>
+        <div class="card limit"><div class="lbl">Median − N×<span class="sig">σ</span></div><div class="val rMedLimit">–</div><div class="sub2 rMedLimitN">N = –</div></div>
+        <div class="card"><div class="lbl">Min / Max</div><div class="val rMinMax" style="font-size:16px;">–</div></div>
+      </div>
+
+      <div class="chart-panel">
+        <div class="chart-title">Strip Yield 分佈</div>
+        <svg class="hist" viewBox="0 0 900 290"></svg>
+        <div class="axis-note">左軸（長條）：樣本數量　·　右軸（曲線）：機率密度　·　<span class="outlierNote"></span></div>
+        <div class="legend">
+          <span><i style="background:var(--phosphor)"></i>Average</span>
+          <span><i style="background:none; border-top:2px dashed #ffb3d1;"></i>Median</span>
+          <span><i style="background:none; border-top:2px solid #ffd0e3;"></i>機率密度分布</span>
+          <span><i style="background:var(--amber)"></i>Average − N×<span class="sig">σ</span></span>
+          <span><i style="background:none; border-top:2px dashed var(--red);"></i>Median − N×<span class="sig">σ</span></span>
+        </div>
+      </div>
+
+      <div class="table-panel">
+        <div class="chart-title">N = 3 ~ 8 對照表</div>
+        <table>
+          <thead><tr><th>N</th><th>Average − N×<span class="sig">σ</span></th><th>Median − N×<span class="sig">σ</span></th></tr></thead>
+          <tbody class="refTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer>ALL COMPUTATION RUNS LOCALLY IN YOUR BROWSER — NO FILE IS UPLOADED</footer>
+</div>
+
+<script>
+(function(){
+  const DEFAULT_N = 6;
+
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const dzFilename = document.getElementById('dzFilename');
+  const dzStatus = document.getElementById('dzStatus');
+  const tabs = document.getElementById('tabs');
+
+  // ---- tab switching ----
+  document.querySelectorAll('.tab-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ---- generic sigma dropdown population ----
+  function buildSigmaSelect(sel){
+    sel.innerHTML = '';
+    for(let n=3; n<=8; n++){
+      const opt = document.createElement('option');
+      opt.value = n; opt.textContent = n + ' σ';
+      if(n===DEFAULT_N) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+  document.querySelectorAll('select.sigmaSel').forEach(buildSigmaSelect);
+
+  function colLetterToIndex(letters){
+    let idx = 0;
+    for(let i=0;i<letters.length;i++){
+      idx = idx*26 + (letters.charCodeAt(i) - 64);
+    }
+    return idx - 1; // 0-based
+  }
+
+  // ---- state per view ----
+  const views = {
+    panel: { scope: document.getElementById('resultPanel-panel'), values: [], stats: null, invalidCount: 0 },
+    strip: { scope: document.getElementById('resultPanel-strip'), values: [], stats: null, invalidCount: 0 }
+  };
+
+  dropzone.addEventListener('click', ()=> fileInput.click());
+  dropzone.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') fileInput.click(); });
+  fileInput.addEventListener('change', (e)=>{
+    if(e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+  });
+
+  ['dragenter','dragover'].forEach(evt=>{
+    dropzone.addEventListener(evt, (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      dropzone.classList.add('drag');
+    });
+  });
+  ['dragleave','drop'].forEach(evt=>{
+    dropzone.addEventListener(evt, (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      dropzone.classList.remove('drag');
+    });
+  });
+  dropzone.addEventListener('drop', (e)=>{
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(f) handleFile(f);
+  });
+
+  function setStatus(msg, isErr){
+    dzStatus.textContent = msg || '';
+    dzStatus.classList.toggle('err', !!isErr);
+  }
+
+  async function handleFile(file){
+    dropzone.classList.add('has-file');
+    dzFilename.textContent = file.name;
+    setStatus('讀取中…', false);
+    Object.values(views).forEach(v=> v.scope.classList.remove('show'));
+    tabs.classList.remove('show');
+
+    try{
+      const lower = file.name.toLowerCase();
+      let workbook;
+
+      if(lower.endsWith('.zip')){
+        const zip = await JSZip.loadAsync(file);
+        let entryName = Object.keys(zip.files).find(n => n.toLowerCase().endsWith('.xlsx') && !zip.files[n].dir);
+        if(!entryName) throw new Error('ZIP 內找不到 .xlsx 檔案');
+        const buf = await zip.files[entryName].async('arraybuffer');
+        workbook = XLSX.read(buf, {type:'array'});
+      } else if(lower.endsWith('.xlsx')){
+        const buf = await file.arrayBuffer();
+        workbook = XLSX.read(buf, {type:'array'});
+      } else {
+        throw new Error('請提供 .xlsx 或 .zip 檔案');
+      }
+
+      const rows = findRows(workbook);
+      const panelResult = extractPanelYield(rows.rows);
+      const stripResult = extractStripYield(rows.rows);
+      const panelValues = panelResult.values;
+      const stripValues = stripResult.values;
+
+      if(panelValues.length === 0 && stripValues.length === 0){
+        throw new Error('找不到 Yield 欄位或 AC~AZ 良率資料');
+      }
+
+      if(panelValues.length > 0){
+        views.panel.values = panelValues;
+        views.panel.stats = computeStats(panelValues);
+        views.panel.invalidCount = panelResult.invalidCount;
+        renderView('panel', file.name, rows.sheetName);
+      } else {
+        setStatus('注意：找不到 Yield 欄位（Panel Yield 無資料）', true);
+      }
+
+      if(stripValues.length > 0){
+        views.strip.values = stripValues;
+        views.strip.stats = computeStats(stripValues);
+        views.strip.invalidCount = stripResult.invalidCount;
+        renderView('strip', file.name, rows.sheetName);
+      }
+
+      tabs.classList.add('show');
+      const invalidNote = (panelResult.invalidCount + stripResult.invalidCount) > 0
+        ? `（已排除 ${panelResult.invalidCount + stripResult.invalidCount} 筆超出 0~100% 範圍的異常值）`
+        : '';
+      setStatus(`成功解析 — Panel Yield: ${panelValues.length} 筆, Strip Yield: ${stripValues.length} 筆 ${invalidNote}`, false);
+
+    }catch(err){
+      console.error(err);
+      setStatus('錯誤：' + err.message, true);
+    }
+  }
+
+  function findRows(workbook){
+    for(const sheetName of workbook.SheetNames){
+      const ws = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null});
+      if(rows.length > 1) return {rows, sheetName};
+    }
+    return {rows:[], sheetName:null};
+  }
+
+  function extractPanelYield(rows){
+    if(rows.length === 0) return {values:[], invalidCount:0};
+    const header = rows[0];
+    let colIdx = -1;
+    for(let i=0;i<header.length;i++){
+      if(header[i] !== null && String(header[i]).trim().toLowerCase() === 'yield'){
+        colIdx = i; break;
+      }
+    }
+    if(colIdx === -1) return {values:[], invalidCount:0};
+    const values = [];
+    let invalidCount = 0;
+    for(let r=1; r<rows.length; r++){
+      const v = rows[r][colIdx];
+      const num = toNumber(v);
+      if(num === null) continue;
+      if(isValidYield(num)){ values.push(num); } else { invalidCount++; }
+    }
+    return {values, invalidCount};
+  }
+
+  function extractStripYield(rows){
+    if(rows.length === 0) return {values:[], invalidCount:0};
+    const startCol = colLetterToIndex('AC');
+    const endCol = colLetterToIndex('AZ');
+    const values = [];
+    let invalidCount = 0;
+    for(let r=1; r<rows.length; r++){
+      for(let c=startCol; c<=endCol; c++){
+        const v = rows[r][c];
+        const num = toNumber(v);
+        if(num === null) continue;
+        if(isValidYield(num)){ values.push(num); } else { invalidCount++; }
+      }
+    }
+    return {values, invalidCount};
+  }
+
+  // A yield value must physically fall within 0%~100% (with tiny float tolerance).
+  // Anything outside this range is corrupt/erroneous source data (e.g. duplicated
+  // or mis-merged cells) and is excluded from both statistics and charts.
+  function isValidYield(num){
+    return num >= -1e-9 && num <= 1 + 1e-9;
+  }
+
+  function toNumber(v){
+    if(typeof v === 'number' && isFinite(v)) return v;
+    if(typeof v === 'string' && v.trim() !== ''){
+      const cleaned = v.replace('%','').trim();
+      const num = parseFloat(cleaned);
+      if(!isNaN(num)) return v.includes('%') ? num/100 : num;
+    }
+    return null;
+  }
+
+  function computeStats(v){
+    const n = v.length;
+    const sum = v.reduce((a,b)=>a+b,0);
+    const avg = sum / n;
+    const sorted = [...v].sort((a,b)=>a-b);
+    const mid = Math.floor(n/2);
+    const median = n % 2 === 0 ? (sorted[mid-1]+sorted[mid])/2 : sorted[mid];
+    const variance = n > 1 ? v.reduce((a,b)=>a + Math.pow(b-avg,2), 0) / (n-1) : 0;
+    const std = Math.sqrt(variance);
+    const min = sorted[0], max = sorted[n-1];
+    // Yield values are fractions (0~1) — always present as percentage, matching Panel Yield.
+    const displayScale = 100;
+    const displayUnit = '%';
+    return {n, avg, median, std, min, max, sorted, displayScale, displayUnit};
+  }
+
+  function fmt(stats, x, decimals){
+    if(decimals === undefined) decimals = 4;
+    return (x*stats.displayScale).toFixed(decimals) + stats.displayUnit;
+  }
+
+  function renderView(key, fileName, sheetName){
+    const view = views[key];
+    const scope = view.scope;
+    const stats = view.stats;
+
+    scope.querySelectorAll('.mFile').forEach(el=> el.textContent = fileName + (sheetName ? ` (${sheetName})` : ''));
+    scope.querySelectorAll('.mCount').forEach(el=> el.textContent = stats.n);
+    scope.querySelectorAll('.rAvg').forEach(el=> el.textContent = fmt(stats, stats.avg));
+    scope.querySelectorAll('.rMed').forEach(el=> el.textContent = fmt(stats, stats.median));
+    scope.querySelectorAll('.rStd').forEach(el=> el.textContent = fmt(stats, stats.std));
+    scope.querySelectorAll('.rMinMax').forEach(el=> el.textContent = fmt(stats, stats.min) + '  /  ' + fmt(stats, stats.max));
+
+    const invalidWrap = scope.querySelector('.mInvalidWrap');
+    if(invalidWrap){
+      const invalidCount = view.invalidCount || 0;
+      invalidWrap.style.display = invalidCount > 0 ? '' : 'none';
+      const badge = invalidWrap.querySelector('.mInvalid');
+      if(badge) badge.textContent = invalidCount;
+    }
+
+    const sel = scope.querySelector('select.sigmaSel');
+    sel.onchange = ()=>{ updateSigmaDependent(key); renderHistogram(key); };
+
+    updateSigmaDependent(key);
+    renderHistogram(key);
+
+    scope.classList.add('show');
+  }
+
+  function currentN(key){
+    return parseInt(views[key].scope.querySelector('select.sigmaSel').value, 10);
+  }
+
+  function updateSigmaDependent(key){
+    const view = views[key];
+    const stats = view.stats;
+    const N = currentN(key);
+    const avgLimit = stats.avg - N*stats.std;
+    const medLimit = stats.median - N*stats.std;
+    view.scope.querySelectorAll('.rAvgLimit').forEach(el=> el.textContent = fmt(stats, avgLimit));
+    view.scope.querySelectorAll('.rMedLimit').forEach(el=> el.textContent = fmt(stats, medLimit));
+    view.scope.querySelectorAll('.rAvgLimitN').forEach(el=> el.textContent = 'N = ' + N);
+    view.scope.querySelectorAll('.rMedLimitN').forEach(el=> el.textContent = 'N = ' + N);
+    renderTable(key);
+  }
+
+  function renderTable(key){
+    const view = views[key];
+    const stats = view.stats;
+    const N = currentN(key);
+    const tbody = view.scope.querySelector('.refTable');
+    tbody.innerHTML = '';
+    for(let n=3; n<=8; n++){
+      const avgLimit = stats.avg - n*stats.std;
+      const medLimit = stats.median - n*stats.std;
+      const tr = document.createElement('tr');
+      if(n === N) tr.classList.add('active-row');
+      tr.innerHTML = `<td>${n}σ</td><td>${fmt(stats, avgLimit)}</td><td>${fmt(stats, medLimit)}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderHistogram(key){
+    const view = views[key];
+    const stats = view.stats;
+    const svg = view.scope.querySelector('svg.hist');
+    const W = 900, H = 290, padL = 52, padR = 58, padT = 22, padB = 34;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+
+    // theme colors per tab
+    const isStrip = (key === 'strip');
+    const barTop   = isStrip ? '#ff6fae' : '#6fffa8';
+    const barBot   = isStrip ? '#4a1c33' : '#1c4a30';
+    const medianCol= isStrip ? '#ffb3d1' : '#9fd8b8';
+    const curveCol = isStrip ? '#ffd0e3' : '#c9ffdf';
+    const gridCol  = isStrip ? '#241419' : '#1c2419';
+
+    const v = stats.sorted;
+
+    // ---- outlier trimming for CHART DISPLAY ONLY (Tukey 1.5×IQR fence) ----
+    // Stats (avg/median/std/min/max/table) always use the FULL dataset (v).
+    // Only the bar/curve x-domain below is narrowed, so the histogram reads as
+    // a clean bell shape instead of being squashed by a long low-yield tail.
+    function quantile(sortedArr, q){
+      const pos = (sortedArr.length-1) * q;
+      const base = Math.floor(pos);
+      const rest = pos - base;
+      return (sortedArr[base+1] !== undefined)
+        ? sortedArr[base] + rest*(sortedArr[base+1]-sortedArr[base])
+        : sortedArr[base];
+    }
+    const q1 = quantile(v, 0.25), q3 = quantile(v, 0.75);
+    const iqr = q3 - q1;
+    const lowerFence = q1 - 1.5*iqr;
+    const upperFence = q3 + 1.5*iqr;
+    let display = v.filter(x=> x >= lowerFence && x <= upperFence);
+    if(display.length < Math.max(10, v.length * 0.05)) display = v; // fallback: too little left, show all
+
+    const outlierCount = v.length - display.length;
+    const min = display[0], max = display[display.length-1];
+    const range = (max - min) || 1;
+
+    // finer bins — scale a bit with sample size, capped for readability
+    const bins = Math.max(120, Math.min(280, Math.round(Math.sqrt(display.length) * 12)));
+    const binW = range / bins;
+    const counts = new Array(bins).fill(0);
+    display.forEach(x=>{
+      let idx = Math.floor((x - min) / binW);
+      if(idx >= bins) idx = bins - 1;
+      if(idx < 0) idx = 0;
+      counts[idx]++;
+    });
+    const maxCount = Math.max(...counts, 1);
+    const binCenters = counts.map((c,i)=> min + (i+0.5)*binW);
+
+    const xScale = (x)=> padL + ((x - min) / range) * plotW;
+    const yScale = (c)=> padT + plotH - (c / maxCount) * plotH;
+
+    let bars = '';
+    const gap = Math.max(0.4, (plotW/bins) * 0.14);
+    counts.forEach((c, i)=>{
+      const x0 = padL + (i/bins)*plotW;
+      const w = plotW/bins - gap;
+      const y = yScale(c);
+      const h = padT + plotH - y;
+      bars += `<rect x="${x0.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="url(#barGrad-${key})" />`;
+    });
+
+    // ---- probability density curve (Gaussian KDE, approximated from binned display data) ----
+    const n = display.length;
+    const dAvg = display.reduce((a,b)=>a+b,0) / n;
+    const dStd = n > 1 ? Math.sqrt(display.reduce((a,b)=>a+Math.pow(b-dAvg,2),0)/(n-1)) : 0;
+    const bandwidth = dStd > 0 ? 1.06 * dStd * Math.pow(n, -1/5) : (range/20 || 1e-6);
+    const h = Math.max(bandwidth, range/500 || 1e-6);
+    const samplePoints = 120;
+    const pts = [];
+    for(let i=0;i<=samplePoints;i++){
+      const x = min + range * (i/samplePoints);
+      let dsum = 0;
+      for(let b=0;b<binCenters.length;b++){
+        const wi = counts[b];
+        if(wi === 0) continue;
+        const z = (x - binCenters[b]) / h;
+        dsum += wi * Math.exp(-0.5*z*z);
+      }
+      const density = dsum / (n * h * Math.sqrt(2*Math.PI));
+      pts.push({x, density});
+    }
+    const maxDensity = Math.max(...pts.map(p=>p.density), 1e-9);
+    const yScaleDensity = (d)=> padT + plotH - (d/maxDensity) * plotH;
+
+    const densityLine = pts.map(p=> `${xScale(p.x).toFixed(1)} ${yScaleDensity(p.density).toFixed(1)}`).join(' L ');
+    const densityPath = `M ${densityLine}`;
+    const densityArea = `M ${xScale(pts[0].x).toFixed(1)} ${(padT+plotH).toFixed(1)} L ${densityLine} L ${xScale(pts[pts.length-1].x).toFixed(1)} ${(padT+plotH).toFixed(1)} Z`;
+
+    const N = currentN(key);
+    const avgLimit = stats.avg - N*stats.std;
+    const medLimit = stats.median - N*stats.std;
+
+    function markerLine(val, color, dash){
+      const cx = xScale(val);
+      const clamped = Math.max(padL, Math.min(padL+plotW, cx));
+      return `<line x1="${clamped}" y1="${padT}" x2="${clamped}" y2="${padT+plotH}" stroke="${color}" stroke-width="1.6" ${dash? 'stroke-dasharray="5,4"':''} />`;
+    }
+
+    let markers = '';
+    markers += markerLine(stats.avg, 'var(--phosphor)', false);
+    markers += markerLine(stats.median, medianCol, true);
+    markers += markerLine(avgLimit, 'var(--amber)', false);
+    markers += markerLine(medLimit, 'var(--red)', true);
+
+    // ---- dual y-axis gridlines + tick labels ----
+    function fmtDensity(d){
+      if(d <= 0) return '0';
+      if(d >= 100) return d.toFixed(0);
+      if(d >= 10) return d.toFixed(1);
+      return d.toFixed(2);
+    }
+    let yAxis = '';
+    const tickCount = 4;
+    for(let t=0;t<=tickCount;t++){
+      const frac = t/tickCount;
+      const y = padT + plotH - frac*plotH;
+      yAxis += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL+plotW}" y2="${y.toFixed(1)}" stroke="${gridCol}" stroke-width="1" ${t===0?'':'stroke-dasharray="2,4"'} />`;
+      yAxis += `<text x="${(padL-8).toFixed(1)}" y="${(y+3).toFixed(1)}" fill="var(--text-dim)" font-family="var(--font-mono)" font-size="9.5" text-anchor="end">${Math.round(maxCount*frac)}</text>`;
+      yAxis += `<text x="${(padL+plotW+8).toFixed(1)}" y="${(y+3).toFixed(1)}" fill="var(--text-dim)" font-family="var(--font-mono)" font-size="9.5" text-anchor="start">${fmtDensity(maxDensity*frac)}</text>`;
+    }
+
+    const axisLabels = `
+      <text x="${padL}" y="${H-8}" fill="var(--text-dim)" font-family="var(--font-mono)" font-size="10">${fmt(stats, min)}</text>
+      <text x="${padL+plotW}" y="${H-8}" fill="var(--text-dim)" font-family="var(--font-mono)" font-size="10" text-anchor="end">${fmt(stats, max)}</text>
+      <text x="${padL}" y="12" fill="var(--text-dim)" font-family="var(--font-mono)" font-size="9.5">數量</text>
+      <text x="${padL+plotW}" y="12" fill="var(--text-dim)" font-family="var(--font-mono)" font-size="9.5" text-anchor="end">機率</text>
+    `;
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="barGrad-${key}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${barTop}" stop-opacity="0.85"/>
+          <stop offset="100%" stop-color="${barBot}" stop-opacity="0.55"/>
+        </linearGradient>
+      </defs>
+      ${yAxis}
+      <line x1="${padL}" y1="${padT+plotH}" x2="${padL+plotW}" y2="${padT+plotH}" stroke="#23301f" stroke-width="1"/>
+      ${bars}
+      <path d="${densityArea}" fill="${curveCol}" fill-opacity="0.10" stroke="none"/>
+      <path d="${densityPath}" fill="none" stroke="${curveCol}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      ${markers}
+      ${axisLabels}
+    `;
+
+    const noteEl = view.scope.querySelector('.outlierNote');
+    if(noteEl){
+      noteEl.textContent = outlierCount > 0
+        ? `圖表已隱藏 ${outlierCount} 筆離群值（統計數據仍計算全部 ${v.length} 筆樣本）`
+        : `圖表顯示全部 ${v.length} 筆樣本`;
+    }
+  }
+
+})();
+</script>
+</body>
+</html>
