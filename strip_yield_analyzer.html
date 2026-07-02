@@ -665,27 +665,16 @@
 
     const v = stats.sorted;
 
-    // ---- outlier trimming for CHART DISPLAY ONLY (Tukey 1.5×IQR fence) ----
+    // ---- fixed x-axis domain for CHART DISPLAY ONLY: 70% ~ 100% ----
     // Stats (avg/median/std/min/max/table) always use the FULL dataset (v).
-    // Only the bar/curve x-domain below is narrowed, so the histogram reads as
-    // a clean bell shape instead of being squashed by a long low-yield tail.
-    function quantile(sortedArr, q){
-      const pos = (sortedArr.length-1) * q;
-      const base = Math.floor(pos);
-      const rest = pos - base;
-      return (sortedArr[base+1] !== undefined)
-        ? sortedArr[base] + rest*(sortedArr[base+1]-sortedArr[base])
-        : sortedArr[base];
-    }
-    const q1 = quantile(v, 0.25), q3 = quantile(v, 0.75);
-    const iqr = q3 - q1;
-    const lowerFence = q1 - 1.5*iqr;
-    const upperFence = q3 + 1.5*iqr;
-    let display = v.filter(x=> x >= lowerFence && x <= upperFence);
-    if(display.length < Math.max(10, v.length * 0.05)) display = v; // fallback: too little left, show all
+    // Only the bar/curve x-domain below is fixed, so different lots/files stay
+    // visually comparable and the histogram isn't stretched by rare low-yield tails.
+    const DOMAIN_MIN = 0.70, DOMAIN_MAX = 1.00;
+    let display = v.filter(x=> x >= DOMAIN_MIN && x <= DOMAIN_MAX);
+    if(display.length === 0) display = v; // ultimate fallback if all data falls outside the fixed window
 
     const outlierCount = v.length - display.length;
-    const min = display[0], max = display[display.length-1];
+    const min = DOMAIN_MIN, max = DOMAIN_MAX;
     const range = (max - min) || 1;
 
     // finer bins — scale a bit with sample size, capped for readability
